@@ -6,4 +6,8 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <PackageReference Include="OpenTelemetry.Api" Version="1.18.0" />
+  </ItemGroup>
+
 </Project>

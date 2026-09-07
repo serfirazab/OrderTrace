@@ -1,14 +1,17 @@
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 using Confluent.Kafka;
 using Microsoft.Extensions.Options;
 using OrderTrace.Shared.Contracts;
+using OrderTrace.Shared.Telemetry;
 using OrderTrace.Worker.Data;
 using OrderTrace.Worker.Options;
 
 namespace OrderTrace.Worker.Services;
 
 // Phase 1 (log-only): consume order-created, call fraud-check, persist, commit offset.
+// Phase 2: each message resumes the producer's W3C trace (see ProcessAsync).
 // At-least-once: an offset is committed only after the order is persisted. Failures retry
 // with a bounded backoff; a message that exhausts retries is treated as poison and skipped.
 public sealed class OrderConsumerWorker(
@@ -66,6 +69,23 @@ public sealed class OrderConsumerWorker(
 
     private async Task ProcessAsync(ConsumeResult<string, string> result, CancellationToken ct)
     {
+        // Phase 2: resume the producer's trace. Confluent has no auto-instrumentation, so the
+        // W3C traceparent the ingest service stored on the message headers is extracted here
+        // and becomes the parent of a consumer span. The HTTP fraud-check and EF Core save
+        // below are auto-instrumented and land under the same trace_id.
+        var parent = Tracing.ExtractContext(name =>
+            result.Message.Headers.TryGetLastBytes(name, out var raw)
+                ? Encoding.UTF8.GetString(raw)
+                : null);
+
+        using var activity = Tracing.Source.StartActivity(
+            "order-created.process", ActivityKind.Consumer, parent.GetValueOrDefault());
+        activity?.SetTag("messaging.system", "kafka");
+        activity?.SetTag("messaging.destination", _kafka.Topic);
+        activity?.SetTag("messaging.operation", "process");
+        activity?.SetTag("messaging.kafka.partition", result.Partition.Value);
+        activity?.SetTag("messaging.kafka.offset", result.Offset.Value);
+
         var totalStopwatch = Stopwatch.StartNew();
 
         OrderCreated order;
@@ -91,8 +111,8 @@ public sealed class OrderConsumerWorker(
         while (attempts < _settings.MaxAttempts)
         {
             attempts++;
-            log.LogInformation("Worker attempt OrderId={OrderId} Attempt={Attempt}/{Max}",
-                order.OrderId, attempts, _settings.MaxAttempts);
+            log.LogInformation("Worker attempt OrderId={OrderId} Attempt={Attempt}/{Max} TraceId={TraceId} SpanId={SpanId}",
+                order.OrderId, attempts, _settings.MaxAttempts, activity?.TraceId, activity?.SpanId);
 
             var callStopwatch = Stopwatch.StartNew();
             try
@@ -143,8 +163,8 @@ public sealed class OrderConsumerWorker(
 
         await db.SaveChangesAsync(ct);
 
-        log.LogInformation("Worker persisted OrderId={OrderId} Approved={Approved} Attempts={Attempts} TotalLatencyMs={LatencyMs}",
-            order.OrderId, decision.Approved, attempts, totalStopwatch.ElapsedMilliseconds);
+        log.LogInformation("Worker persisted OrderId={OrderId} Approved={Approved} Attempts={Attempts} TotalLatencyMs={LatencyMs} TraceId={TraceId}",
+            order.OrderId, decision.Approved, attempts, totalStopwatch.ElapsedMilliseconds, activity?.TraceId);
 
         Commit(result);
     }

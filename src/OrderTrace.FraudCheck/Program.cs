@@ -1,9 +1,19 @@
 using System.Diagnostics;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 using OrderTrace.FraudCheck.Models;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddSingleton<ChaosState>();
+
+// Phase 2: OpenTelemetry. The worker's instrumented HttpClient sends a W3C traceparent header
+// on the fraud-check call; ASP.NET Core instrumentation here extracts it and joins that trace.
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(r => r.AddService(builder.Configuration["OTEL_SERVICE_NAME"] ?? "ordertrace-fraudcheck"))
+    .WithTracing(t => t
+        .AddAspNetCoreInstrumentation()
+        .AddOtlpExporter());
 
 var app = builder.Build();
 
