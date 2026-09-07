@@ -2,6 +2,8 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using Confluent.Kafka;
+using OpenTelemetry.Logs;
+using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using OrderTrace.Shared.Contracts;
@@ -21,14 +23,21 @@ builder.Services.AddSingleton<IProducer<string, string>>(_ =>
         Acks = Acks.All,
     }).Build());
 
-// Phase 2: OpenTelemetry. The publish handler starts a producer span and Tracing.InjectHeaders
+// Phase 2+3: OpenTelemetry. The publish handler starts a producer span and Tracing.InjectHeaders
 // copies its W3C context onto the Kafka record so the worker can continue the same trace.
+// Phase 3: ASP.NET Core instrumentations feed the RED metrics (http.server.request.duration
+// etc.) and logs export to the collector carrying trace_id/span_id for the Loki→Tempo jump.
 builder.Services.AddOpenTelemetry()
     .ConfigureResource(r => r.AddService(serviceName))
     .WithTracing(t => t
         .AddSource(Tracing.SourceName)
         .AddAspNetCoreInstrumentation()
-        .AddOtlpExporter());
+        .AddOtlpExporter())
+    .WithMetrics(m => m
+        .AddAspNetCoreInstrumentation()
+        .AddOtlpExporter())
+    .WithLogging(logging => logging.AddOtlpExporter(),
+        options => options.IncludeFormattedMessage = true);
 
 var app = builder.Build();
 

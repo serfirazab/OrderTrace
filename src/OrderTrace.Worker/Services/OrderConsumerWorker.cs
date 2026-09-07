@@ -145,6 +145,9 @@ public sealed class OrderConsumerWorker(
         if (decision is null)
         {
             // Exhausted retries → poison. Skip so the partition is not blocked forever.
+            // Phase 3: a failed order is a RED "error" — recorded so the retry storm that led
+            // here is visible as order.process.duration{outcome="failed"} + order.process.failed.
+            OrderMetrics.RecordFailed(totalStopwatch.ElapsedMilliseconds, attempts);
             Commit(result);
             return;
         }
@@ -165,6 +168,11 @@ public sealed class OrderConsumerWorker(
 
         log.LogInformation("Worker persisted OrderId={OrderId} Approved={Approved} Attempts={Attempts} TotalLatencyMs={LatencyMs} TraceId={TraceId}",
             order.OrderId, decision.Approved, attempts, totalStopwatch.ElapsedMilliseconds, activity?.TraceId);
+
+        // Phase 3: every finished order contributes one duration sample and a completed counter
+        // increment. Retried-but-eventually-ok orders keep attempts>1, poisoning orders hit the
+        // failed branch above.
+        OrderMetrics.RecordProcessed(totalStopwatch.ElapsedMilliseconds, attempts);
 
         Commit(result);
     }
