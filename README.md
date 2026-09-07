@@ -98,7 +98,9 @@ ordertrace-orderingest   POST /orders           127 ms   ← root (HTTP server)
 ```
 
 The 2.6 s is now attributable in seconds: the consumer span is slow because its
-fraud-check child span took 2.5 s.
+fraud-check child span took 2.5 s. The same trace as a waterfall (Tempo/Grafana):
+
+![Tempo trace waterfall — one trace_id across OrderIngest, Worker and FraudCheck](docs/screenshots/tempo-waterfall.png)
 
 ### Run it
 
