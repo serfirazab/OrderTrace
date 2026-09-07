@@ -12,20 +12,26 @@ services:
       - "19092:9092"
     environment:
       # KRaft mode - no Zookeeper needed.
+      # Confluent's canonical single-node layout: internal listeners bind to the
+      # container hostname (routable for controller + health checks) and only the
+      # host-facing listener binds 0.0.0.0. Host apps connect via localhost:19092.
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: "broker,controller"
-      KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:9092,CONTROLLER://kafka:9093"
-      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://localhost:19092"
+      KAFKA_LISTENERS: "PLAINTEXT://ordertrace-kafka:29092,CONTROLLER://ordertrace-kafka:9093,PLAINTEXT_HOST://0.0.0.0:9092"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://ordertrace-kafka:29092,PLAINTEXT_HOST://localhost:19092"
       KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
-      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@ordertrace-kafka:9093"
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_DEFAULT_REPLICATION_FACTOR: 1
       KAFKA_MIN_INSYNC_REPLICAS: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       CLUSTER_ID: "MkUzOEVBNTcwNTJEMzM2Qk"
     healthcheck:
-      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      # Uses the INTERNAL listener so the advertised EXTERNAL (host) address
+      # is not needed from inside the container.
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "ordertrace-kafka:29092", "--list"]
       interval: 10s
       timeout: 5s
       retries: 10
