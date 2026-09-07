@@ -1,0 +1,65 @@
+# OrderTrace infra: Kafka (KRaft), PostgreSQL, and the grafana/otel-lgtm
+# all-in-one observability stack (Grafana + Tempo + Prometheus + Loki + OTLP collector).
+#
+# Host ports are offset (19092 / 15432) so this demo does not clash with the
+# other portfolio projects when several compose stacks exist on one machine.
+
+services:
+  kafka:
+    image: confluentinc/cp-kafka:7.9.0
+    container_name: ordertrace-kafka
+    ports:
+      - "19092:9092"
+    environment:
+      # KRaft mode - no Zookeeper needed.
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_LISTENERS: "PLAINTEXT://0.0.0.0:9092,CONTROLLER://kafka:9093"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://localhost:19092"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+      KAFKA_MIN_INSYNC_REPLICAS: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      CLUSTER_ID: "MkUzOEVBNTcwNTJEMzM2Qk"
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  postgres:
+    image: postgres:17-alpine
+    container_name: ordertrace-postgres
+    ports:
+      - "15432:5432"
+    environment:
+      POSTGRES_USER: ordertrace
+      POSTGRES_PASSWORD: ordertrace
+      POSTGRES_DB: ordertrace
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ordertrace -d ordertrace"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  otel-lgtm:
+    image: grafana/otel-lgtm:latest
+    container_name: ordertrace-otel-lgtm
+    ports:
+      - "3000:3000"   # Grafana UI
+      - "4317:4317"   # OTLP/gRPC
+      - "4318:4318"   # OTLP/HTTP
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - lgtm-data:/data
+
+volumes:
+  pgdata:
+  lgtm-data:

@@ -1,0 +1,51 @@
+## .NET build output
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.vs/
+.vscode/
+.idea/
+*.swp
+*~
+
+## NuGet
+*.nupkg
+*.snupkg
+packages/
+project.assets.json
+*.nuget.g.props
+*.nuget.g.targets
+
+## Rider / JetBrains
+.idea/
+
+## Local DB / data (EF, SQLite, compose volumes)
+data/
+pgdata/
+*.db
+*.db-shm
+*.db-wal
+
+## Runtime / logs
+logs/
+*.log
+log/
+
+## Local-only working notes (NOT committed — dev plan lives locally)
+docs/plan.md
+
+## App secrets & local overrides
+appsettings.Local.json
+appsettings.*.Local.json
+secrets.json
+
+## OS
+.DS_Store
+Thumbs.db
+
+## Test results
+TestResults/
+coverage/
