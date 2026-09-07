@@ -17,7 +17,7 @@ this project answers is: *when that journey misbehaves, how do you find the root
 | Phase | Scope | State |
 |---|---|---|
 | **1** | Working log-only pipeline + chaos injection (the "blind" baseline) | ✅ implemented |
-| **2** | OpenTelemetry distributed tracing + Kafka propagation | ⏳ next |
+| **2** | OpenTelemetry distributed tracing + Kafka propagation | ✅ implemented |
 | **3** | RED metrics + structured logs with trace correlation | 📋 planned |
 
 The project follows the portfolio formula: Phase 1 ships a *working* system that is
@@ -79,17 +79,69 @@ curl -s -X POST http://localhost:5011/_chaos -H 'Content-Type: application/json'
 ```
 
 Watch the three consoles: each service logs its slice of the story, but no single
-log stream can tell you *where* the 2.5 s went — that is exactly the Phase 1 problem,
-and Phase 2 (OpenTelemetry) fixes it.
+log stream can tell you *where* the 2.5 s went — that is exactly the Phase 1 problem.
+
+## Phase 2 — Seeing the same order as one trace
+
+Phase 2 instruments the same flow with OpenTelemetry. Each service exports spans over
+OTLP to the bundled **LGTM** stack (`infra/docker-compose.yml` already runs it), and the
+W3C `traceparent` context is carried manually across Kafka message headers (Confluent.Kafka
+has no auto-instrumentation — see `OrderTrace.Shared/Telemetry/Tracing.cs`). The same slow
+order now shows as a single waterfall in Grafana/Tempo:
+
+```
+ordertrace-orderingest   POST /orders           127 ms   ← root (HTTP server)
+ └ kafka.publish         (producer)                      ← traceparent injected on the record
+    └ order-created.process           2 725 ms   ← worker resumes the trace from headers
+       ├ POST /v1/fraudcheck          2 580 ms   ← joined over HTTP (worker → FraudCheck)
+       └ ordertrace (EF Core → PG)       18 ms
+```
+
+The 2.6 s is now attributable in seconds: the consumer span is slow because its
+fraud-check child span took 2.5 s.
+
+### Run it
+
+Start the services with the OTLP exporter pointed at the LGTM stack:
+
+```bash
+# OrderIngest / Worker / FraudCheck (three terminals) — kafka/postgres/LGTM already up
+OTEL_SERVICE_NAME=ordertrace-orderingest OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf \
+  dotnet run --project src/OrderTrace.OrderIngest --launch-profile http     # :5010
+
+OTEL_SERVICE_NAME=ordertrace-worker OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf \
+  dotnet run --project src/OrderTrace.Worker
+
+OTEL_SERVICE_NAME=ordertrace-fraudcheck OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf \
+  dotnet run --project src/OrderTrace.FraudCheck --launch-profile http     # :5011
+```
+
+Then post an order while FraudCheck is slow, open **http://localhost:3000** (admin/admin),
+Explore → **Tempo**, and search by Trace ID:
+
+```bash
+curl -s -X POST http://localhost:5011/_chaos -H 'Content-Type: application/json' \
+  -d '{"latencyMs":2500,"failureRate":0}'                      # make FraudCheck slow
+curl -s -X POST http://localhost:5010/orders -H 'Content-Type: application/json' \
+  -d '{"customerName":"Ada","totalAmount":1250.50}'            # order whose trace you want
+curl -s -X POST http://localhost:5011/_chaos -H 'Content-Type: application/json' \
+  -d '{"latencyMs":0,"failureRate":0}'                         # reset chaos
+```
+
+Each service also logs its `TraceId`, so a single id can be matched across the OrderIngest,
+Worker and FraudCheck consoles — proof the trace survived the async hop even before opening
+Grafana.
 
 ## Repo Layout
 
 ```
 ├── src/
-│   ├── OrderTrace.Shared/       # events + topic constants
-│   ├── OrderTrace.OrderIngest/  # Kafka producer (API)
-│   ├── OrderTrace.Worker/       # consumer + fraud-check + Postgres
-│   └── OrderTrace.FraudCheck/   # flaky downstream + runtime chaos
+│   ├── OrderTrace.Shared/       # events, topic constants, W3C Tracing inject/extract
+│   ├── OrderTrace.OrderIngest/  # Kafka producer (API) + OTel
+│   ├── OrderTrace.Worker/       # consumer + fraud-check + Postgres + OTel
+│   └── OrderTrace.FraudCheck/   # flaky downstream + runtime chaos + OTel
+├── tests/
+│   └── OrderTrace.Tests/        # Kafka traceparent round-trip (Testcontainers)
 ├── infra/docker-compose.yml     # kafka + postgres + grafana/otel-lgtm
 ├── CLAUDE.md                    # git + code conventions
 └── docs/                        # local planning docs (plan.md is gitignored)
