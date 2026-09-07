@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using OpenTelemetry.Logs;
+using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using OrderTrace.FraudCheck.Models;
@@ -7,13 +9,20 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddSingleton<ChaosState>();
 
-// Phase 2: OpenTelemetry. The worker's instrumented HttpClient sends a W3C traceparent header
+// Phase 2+3: OpenTelemetry. The worker's instrumented HttpClient sends a W3C traceparent header
 // on the fraud-check call; ASP.NET Core instrumentation here extracts it and joins that trace.
+// Phase 3: its 503s during a failure-injection spell feed http.server.request.duration RED, and
+// logs export with trace_id/span_id so a failing order's Loki lines link to the same waterfall.
 builder.Services.AddOpenTelemetry()
     .ConfigureResource(r => r.AddService(builder.Configuration["OTEL_SERVICE_NAME"] ?? "ordertrace-fraudcheck"))
     .WithTracing(t => t
         .AddAspNetCoreInstrumentation()
-        .AddOtlpExporter());
+        .AddOtlpExporter())
+    .WithMetrics(m => m
+        .AddAspNetCoreInstrumentation()
+        .AddOtlpExporter())
+    .WithLogging(logging => logging.AddOtlpExporter(),
+        options => options.IncludeFormattedMessage = true);
 
 var app = builder.Build();
 
