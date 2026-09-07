@@ -24,6 +24,10 @@ The project follows the portfolio formula: Phase 1 ships a *working* system that
 painful to debug; a later phase instruments it and proves the same failure is found
 in seconds. Git history (issue → branch → PR → merge commit) tells that story.
 
+The full architecture, message/persistence contracts and the observability contract
+(three signals, exact instrument and log-field names) are specified in
+[`docs/project-domain-spec.md`](docs/project-domain-spec.md).
+
 ## Architecture
 
 ```
@@ -222,7 +226,9 @@ curl -s -X POST http://localhost:5010/orders -H 'Content-Type: application/json'
 │   └── OrderTrace.Tests/        # Kafka traceparent round-trip (Testcontainers) + OrderMetrics unit test
 ├── infra/docker-compose.yml     # kafka + postgres + grafana/otel-lgtm
 ├── CLAUDE.md                    # git + code conventions
-└── docs/                        # local planning docs (plan.md is gitignored)
+└── docs/
+    ├── project-domain-spec.md   # committed project & domain specification
+    └── screenshots/             # trace/waterfall evidence embedded above
 ```
 
 ## License
